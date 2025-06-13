@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Real-Time Document Validation</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 40px;
+      background-color: #f9f9f9;
+    }
+    .form-group {
+      margin-bottom: 15px;
+    }
+    .form-group label {
+      display: block;
+      margin-bottom: 5px;
+    }
+    .form-group input {
+      width: 100%;
+      padding: 8px;
+      border: 2px solid transparent;
+      border-radius: 4px;
+      transition: border-color 0.3s ease;
+    }
+    .form-group input.valid {
+      border-color: green;
+    }
+    .form-group input.invalid {
+      border-color: red;
+    }
+    .error {
+      color: red;
+      font-size: 0.9em;
+      margin-top: 2px;
+    }
+    button {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 5px;
+      background-color: #007bff;
+      color: white;
+      font-size: 1em;
+      cursor: pointer;
+    }
+    button:disabled {
+      background-color: #ccc;
+      cursor: not-allowed;
+    }
+    /* Spinner */
+    #spinner {
+      display: none;
+      margin-top: 20px;
+      text-align: center;
+    }
+ 
+    .loader {
+      border: 6px solid #f3f3f3;
+      border-top: 6px solid #007bff;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      animation: spin 1s linear infinite;
+      margin: auto;
+    }
+ 
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <h2>Validate Documents in Real Time</h2>
+ 
+  <!-- Upload Form -->
+  <form id="uploadForm" enctype="multipart/form-data">
+    <div class="form-group">
+      <label for="aadhaarFile">Upload Aadhaar Card</label>
+      <input type="file" id="aadhaarFile" name="aadhaarFile" accept="image/*" required>
+    </div>
+    <div class="form-group">
+      <label for="panFile">Upload PAN Card</label>
+      <input type="file" id="panFile" name="panFile" accept="image/*" required>
+    </div>
+    <button type="submit" id="uploadButton" disabled>Upload Documents</button>
+  </form>
+ 
+  <!-- Spinner -->
+  <div id="spinner">
+    <div class="loader"></div>
+    <p>Processing documents...</p>
+  </div>
+ 
+  <!-- Validation Form -->
+  <form id="validationForm" style="margin-top: 30px;">
+    <div class="form-group">
+      <label for="name">Full Name</label>
+      <input type="text" id="name" name="name">
+      <div class="error" id="name-error"></div>
+    </div>
+ 
+    <div class="form-group">
+      <label for="dob">Date of Birth</label>
+      <input type="date" id="dob" name="dob">
+      <div class="error" id="dob-error"></div>
+    </div>
+ 
+    <div class="form-group">
+      <label for="gender">Gender</label>
+      <input type="text" id="gender" name="gender">
+      <div class="error" id="gender-error"></div>
+    </div>
+ 
+    <div class="form-group">
+      <label for="father_name">Father's Name</label>
+      <input type="text" id="father_name" name="father_name">
+      <div class="error" id="father_name-error"></div>
+    </div>
+ 
+    <div class="form-group">
+      <label for="aadhar">Aadhaar Number</label>
+      <input type="text" id="aadhar" name="aadhar" maxlength="12">
+      <div class="error" id="aadhar-error"></div>
+    </div>
+ 
+    <div class="form-group">
+      <label for="pan">PAN Number</label>
+      <input type="text" id="pan" name="pan" maxlength="10">
+      <div class="error" id="pan-error"></div>
+    </div>
+ 
+    <button type="submit" id="finalSubmit" disabled>Submit</button>
+  </form>
+ 
+  <script>
+  let extractedData = {};
+  const fields = ["name", "dob", "gender", "father_name", "aadhar", "pan"];
+  const aadhaarInput = document.getElementById("aadhaarFile");
+  const panInput = document.getElementById("panFile");
+  const uploadBtn = document.getElementById("uploadButton");
+  const spinner = document.getElementById("spinner");
+ 
+  // Track which fields have been logged to prevent duplicate logging
+  const loggedFields = new Set();
+ 
+  // Logging function
+  async function logEvent(eventType, details) {
+    try {
+      await fetch("http://localhost:8000/log-event/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          timestamp: new Date().toISOString(),
+          event: eventType,
+          details: details
+        })
+      });
+    } catch (err) {
+      // Logging failure is non-blocking
+      console.warn("Logging failed", err);
+    }
+  }
+ 
+  // Disable all fields initially
+  fields.forEach(field => {
+    const element = document.getElementById(field);
+    if (element) element.disabled = true;
+  });
+ 
+  aadhaarInput.addEventListener("change", function() {
+    try {
+      toggleUploadButton();
+      logEvent("aadhaar_file_selected", { fileName: aadhaarInput.files[0]?.name || "unknown" });
+    } catch (err) {
+      console.error("Aadhaar file change error:", err);
+    }
+  });
+ 
+  panInput.addEventListener("change", function() {
+    try {
+      toggleUploadButton();
+      logEvent("pan_file_selected", { fileName: panInput.files[0]?.name || "unknown" });
+    } catch (err) {
+      console.error("PAN file change error:", err);
+    }
+  });
+ 
+  function toggleUploadButton() {
+    uploadBtn.disabled = !(aadhaarInput.files.length && panInput.files.length);
+  }
+ 
+  document.getElementById("uploadForm").addEventListener("submit", async function (event) {
+    event.preventDefault();
+    spinner.style.display = "block";
+    uploadBtn.disabled = true;
+   
+    // Reset logged fields and form submission status when new documents are uploaded
+    loggedFields.clear();
+    isFormSubmitted = false;
+   
+    fields.forEach(field => {
+      const el = document.getElementById(field);
+      if (el) el.disabled = true;
+    });
+ 
+    try {
+      const formData = new FormData();
+      formData.append("aadhaar_file", aadhaarInput.files[0]);
+      formData.append("pan_file", panInput.files[0]);
+ 
+      logEvent("upload_started", {
+        aadhaar: aadhaarInput.files[0]?.name,
+        pan: panInput.files[0]?.name
+      });
+ 
+      const response = await fetch("http://localhost:8000/upload-documents/", {
+        method: "POST",
+        body: formData
+      });
+     
+      const result = await response.json();
+ 
+      if (response.ok) {
+        extractedData = result.data;
+        alert("Documents uploaded and data extracted successfully.");
+        logEvent("upload_success", { extractedData });
+ 
+        fields.forEach(field => {
+          const el = document.getElementById(field);
+          if (el) el.disabled = false;
+        });
+      } else {
+        alert(result.error || "Failed to process documents.");
+        logEvent("upload_failed", { error: result.error });
+      }
+ 
+    } catch (error) {
+      console.error("Upload error:", error);
+      alert("Error uploading documents.");
+      logEvent("upload_error", { error: error.toString() });
+    } finally {
+      spinner.style.display = "none";
+    }
+  });
+ 
+  // Debounce function
+  function debounce(func, wait) {
+    let timeout;
+    return function (...args) {
+      clearTimeout(timeout);
+      timeout = setTimeout(() => func.apply(this, args), wait);
+    };
+  }
+ 
+  // Validation function
+  function validateField(field, value) {
+    const input = document.getElementById(field);
+    const errorDiv = document.getElementById(`${field}-error`);
+    const userInput = value.trim().toLowerCase();
+    const expected = extractedData[field]?.trim().toLowerCase();
+ 
+    input.classList.remove("valid", "invalid");
+    errorDiv.textContent = "";
+ 
+    if (!userInput) {
+      input.classList.remove("valid", "invalid");
+      return null; // No validation result for empty fields
+    }
+ 
+    if (expected && userInput === expected) {
+      input.classList.add("valid");
+      return { isValid: true, field, value, expected: extractedData[field] };
+    } else {
+      input.classList.add("invalid");
+      return { isValid: false, field, value, expected: extractedData[field] };
+    }
+  }
+ 
+  // Check if all fields are valid for form submission
+  function checkFormValidity() {
+    const allValid = fields.every(field => {
+      const input = document.getElementById(field);
+      return input.classList.contains("valid") && input.value.trim() !== "";
+    });
+    // Disable submit button if form is already submitted or not all fields are valid
+    document.getElementById("finalSubmit").disabled = isFormSubmitted || !allValid;
+  }
+ 
+  // Set up event listeners for each field
+  fields.forEach(field => {
+    const input = document.getElementById(field);
+    if (!input) return;
+   
+    // Debounced input validation for real-time visual feedback
+    const debouncedValidation = debounce(() => {
+      validateField(field, input.value);
+      checkFormValidity();
+    }, 300);
+   
+    // Real-time validation while typing (visual feedback only)
+    input.addEventListener("input", debouncedValidation);
+ 
+    // Validate and log when user finishes with the field (on blur)
+    input.addEventListener("blur", () => {
+      const value = input.value.trim();
+      if (value === "") return; // Don't validate empty fields
+     
+      const validationResult = validateField(field, value);
+      checkFormValidity();
+     
+      // Log validation result only once per field completion
+      if (validationResult && !loggedFields.has(field)) {
+        if (validationResult.isValid) {
+          logEvent("field_valid", {
+            field: validationResult.field,
+            value: validationResult.value
+          });
+        } else {
+          logEvent("field_invalid", {
+            field: validationResult.field,
+            value: validationResult.value,
+            expected: validationResult.expected
+          });
+        }
+        loggedFields.add(field);
+      }
+    });
+ 
+    // Reset logging flag when user starts typing in a field again
+    input.addEventListener("focus", () => {
+      loggedFields.delete(field);
+    });
+  });
+ 
+  document.getElementById("validationForm").addEventListener("submit", function (e) {
+    e.preventDefault();
+ 
+    // Prevent multiple submissions
+    if (isFormSubmitted) {
+      alert("Form has already been submitted!");
+      return;
+    }
+ 
+    try {
+      const values = {};
+      let allFilled = true;
+     
+      fields.forEach(f => {
+        const el = document.getElementById(f);
+        if (el && el.value.trim() !== "") {
+          values[f] = el.value.trim();
+        } else {
+          allFilled = false;
+          document.getElementById(`${f}-error`).textContent = "This field is required.";
+          el.classList.add("invalid");
+        }
+      });
+ 
+      if (!allFilled) {
+        alert("Please fill in all fields before submitting.");
+        return;
+      }
+ 
+      // Mark form as submitted
+      isFormSubmitted = true;
+ 
+      // Disable submit button immediately
+      const submitBtn = document.getElementById("finalSubmit");
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Submitted";
+     
+      // Disable all form fields to prevent further editing
+      fields.forEach(field => {
+        const el = document.getElementById(field);
+        if (el) el.disabled = true;
+      });
+ 
+      alert("Form submitted successfully!");
+      logEvent("form_submitted", { values });
+    } catch (err) {
+      // Reset submission status on error
+      isFormSubmitted = false;
+      checkFormValidity();
+      alert("Error submitting form.");
+      logEvent("form_submission_error", { error: err.toString() });
+    }
+  });
+</script>
+</body>
+</html>
